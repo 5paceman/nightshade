@@ -47,7 +47,7 @@ bool nightshade::Injection::Inject()
 			}
 		}
 		else {
-			LOG(3, L"Unable to get handle on process, error %d", GetLastError());
+			LOG(3, L"Unable to get handle on process, error: %s", GetLastErrorAsString(GetLastError()).c_str());
 			return false;
 		}
 	}
@@ -167,41 +167,32 @@ bool nightshade::Injection::REQueueAPC(LPVOID lpEntryPoint, LPVOID lpMemoryAddre
 
 bool nightshade::Injection::RENtCreateThread(LPVOID lpEntryPoint, LPVOID lpMemoryAddress, HANDLE hProc)
 {
-	NtCreateThreadExBuffer ntbuffer;
-
-	memset(&ntbuffer, 0, sizeof(NtCreateThreadExBuffer));
-	DWORD temp1 = 0;
-	DWORD temp2 = 0;
-
-	ntbuffer.Size = sizeof(NtCreateThreadExBuffer);
-	ntbuffer.Unknown1 = 0x10003;
-	ntbuffer.Unknown2 = 0x8;
-	ntbuffer.Unknown3 = (DWORD*)&temp2;
-	ntbuffer.Unknown4 = 0;
-	ntbuffer.Unknown5 = 0x10004;
-	ntbuffer.Unknown6 = 4;
-	ntbuffer.Unknown7 = &temp1;
-	ntbuffer.Unknown8 = 0;
+	if (!AdjustPriviledges())
+	{
+		LOG(3, L"Failed to elevate priviledges");
+		return false;
+	}
 
 	HANDLE hThread;
-	NTSTATUS status = NtCreateThreadEx(&hThread, GENERIC_ALL, NULL, hProc, (LPTHREAD_START_ROUTINE)lpEntryPoint, lpMemoryAddress, FALSE, NULL, NULL, NULL, &ntbuffer);
-	if (hThread)
+	NTSTATUS status = NtCreateThreadEx(&hThread, THREAD_ALL_ACCESS, nullptr, hProc, (LPTHREAD_START_ROUTINE)lpEntryPoint, lpMemoryAddress, FALSE, NULL, NULL, NULL, nullptr);
+	if (NT_SUCCESS(status))
 	{
-		if (WaitForSingleObject(hThread, INFINITE) == WAIT_OBJECT_0) //TODO dont infinite wait
+		DWORD waitResult = WaitForSingleObject(hThread, INFINITE);
+		if (waitResult == WAIT_OBJECT_0) //TODO dont infinite wait
 		{
 			DWORD returnValue;
 			if (GetExitCodeThread(hThread, &returnValue))
 			{
-				LOG(1, L"Remote thread returned %x", returnValue);
+				LOG(1, L"Remote thread returned 0x%08X", returnValue);
 			}
 			return true;
 		}
 		else {
-			LOG(2, L"Couldnt wait for thread to terminate. DLL possibly injected.");
+			LOG(2, L"Couldnt wait for thread to terminate. Thread wait returned %d, DLL possibly injected.", waitResult);
 		}
 	}
 	else {
-		LOG(3, L"Unable to create thread with NtCreateThreadEx");
+		LOG(3, L"Unable to create thread with NtCreateThreadEx. NTSTATUS: 0x%08X \nError: %s", status, GetLastErrorAsString(GetLastError()).c_str());
 	}
 	return false;
 }

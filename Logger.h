@@ -4,8 +4,6 @@
 #include <ostream>
 
 #include <Windows.h>
-#include <format>
-#include <format>
 
 #define LOG(i, a, ...) Logger::getInstance().Log(i, a, __VA_ARGS__)
 

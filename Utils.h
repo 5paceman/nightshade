@@ -145,6 +145,20 @@ namespace nightshade {
 		return isElevated;
 	}
 
+	inline bool AdjustPriviledges()
+	{
+		HANDLE hToken;
+		TOKEN_PRIVILEGES tokenPriv;
+		if (OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken))
+		{
+			LookupPrivilegeValue(NULL, SE_DEBUG_NAME, &tokenPriv.Privileges[0].Luid);
+			tokenPriv.PrivilegeCount = 1;
+			tokenPriv.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+			return AdjustTokenPrivileges(hToken, false, &tokenPriv, sizeof(tokenPriv), NULL, NULL);
+		} 
+		return false;
+	}
+
 	inline const wchar_t* ArchToString(Architecture arch)
 	{
 		switch (arch)

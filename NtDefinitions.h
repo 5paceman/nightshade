@@ -1,21 +1,22 @@
 #pragma once
 #include <windows.h>
+#include <string>
+#include <locale>
+#include <codecvt>
+
+#define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
+#define NT_FAIL(Status) (((NTSTATUS)(Status)) < 0)
 
 #pragma comment(lib, "ntdll.lib")
-EXTERN_C NTSYSAPI NTSTATUS NTAPI NtCreateThreadEx(PHANDLE,
-	ACCESS_MASK, LPVOID, HANDLE, LPTHREAD_START_ROUTINE, LPVOID,
-	BOOL, SIZE_T, SIZE_T, SIZE_T, LPVOID);
+EXTERN_C NTSYSAPI NTSTATUS NTAPI NtCreateThreadEx(PHANDLE,ACCESS_MASK, LPVOID, HANDLE, LPTHREAD_START_ROUTINE, LPVOID,BOOL, SIZE_T, SIZE_T, SIZE_T, LPVOID);
 
-struct NtCreateThreadExBuffer
+inline std::wstring GetLastErrorAsString(DWORD error)
 {
-	SIZE_T Size;
-	SIZE_T Unknown1;
-	SIZE_T Unknown2;
-	PULONG Unknown3;
-	SIZE_T Unknown4;
-	SIZE_T Unknown5;
-	SIZE_T Unknown6;
-	PULONG Unknown7;
-	SIZE_T Unknown8;
-};
+	if (error == 0)
+		return std::wstring(L"No Error");
+
+	std::string errorMessage = std::system_category().message(error);
+	std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+	return converter.from_bytes(errorMessage);
+}
 
