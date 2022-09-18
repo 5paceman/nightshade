@@ -10,9 +10,12 @@
 
 #pragma comment(lib, "Imagehlp.lib")
 
+#define RCast reinterpret_cast
+#define SCast static_cast
+
 namespace nightshade {
 
-	inline Architecture GetDLLArchitecture(TCHAR* path)
+	inline Architecture GetDLLArchitecture(const wchar_t* path)
 	{
 		LOADED_IMAGE loadedImage;
 		ZeroMemory(&loadedImage, sizeof(loadedImage));
@@ -21,6 +24,7 @@ namespace nightshade {
 		wcstombs_s(&cSize, pathBuffer, (wcslen(path) + 1) * sizeof(wchar_t), path, (wcslen(path) + 1) * sizeof(wchar_t));
 		if (!MapAndLoad(pathBuffer, NULL, &loadedImage, FALSE, TRUE))
 		{
+			UnMapAndLoad(&loadedImage);
 			return Architecture::UNKNOWN;
 		}
 		WORD machine = loadedImage.FileHeader->FileHeader.Machine;
@@ -28,10 +32,12 @@ namespace nightshade {
 		{
 			if (machine == IMAGE_FILE_MACHINE_I386)
 			{
+				UnMapAndLoad(&loadedImage);
 				return Architecture::x86;
 			}
 			else if (machine == IMAGE_FILE_MACHINE_AMD64)
 			{
+				UnMapAndLoad(&loadedImage);
 				return Architecture::X64;
 			}
 		}
@@ -41,7 +47,7 @@ namespace nightshade {
 
 	const wchar_t* ArchToString(Architecture arch);
 
-	inline bool IsDllCompatible(TCHAR* dllPath, HANDLE hProc)
+	inline bool IsDllCompatible(const wchar_t* dllPath, HANDLE hProc)
 	{
 		BOOL IsProcWoW64;
 		IsWow64Process(hProc, &IsProcWoW64);
@@ -118,7 +124,7 @@ namespace nightshade {
 		if (data.hWnd != 0)
 		{
 			wchar_t* title = new wchar_t[MAX_PATH];
-			GetWindowText(data.hWnd, title, MAX_PATH);
+			GetWindowTextW(data.hWnd, title, MAX_PATH);
 			return title;
 		}
 		else {

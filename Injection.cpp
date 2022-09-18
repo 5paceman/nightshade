@@ -1,4 +1,5 @@
 #include "Injection.h"
+#include "Shellcode.h"
 
 
 nightshade::Injection::Injection(InjectionData* data)
@@ -25,7 +26,7 @@ bool nightshade::Injection::Inject()
 		{
 			if (IsDllCompatible(m_data->dllPath, hProc))
 			{
-				LPVOID memoryAddress = AllocateMemory(hProc);
+				LPVOID memoryAddress = AllocateAndWriteMemory(hProc);
 				if (memoryAddress)
 				{
 					LPVOID entryPoint = CreateEntryPoint(memoryAddress, hProc);
@@ -37,7 +38,10 @@ bool nightshade::Injection::Inject()
 					}
 					LOG(1, L"Entry point is 0x%08X", entryPoint);
 					bool result = ExecuteEntryPoint(entryPoint, memoryAddress, hProc);
-					Cleanup(entryPoint, memoryAddress, hProc);
+					if (m_data->reMethod == RemoteExecMethod::RE_NtCreateThreadEx)
+						Cleanup(entryPoint, memoryAddress, hProc);
+					else
+						Cleanup(entryPoint, nullptr, hProc);
 					return result;
 				}
 			}
@@ -62,7 +66,7 @@ HANDLE nightshade::Injection::GetProcHandle()
 	return OpenProcess(PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_CREATE_THREAD, false, m_data->pID);
 }
 
-LPVOID nightshade::Injection::AllocateMemory(HANDLE hProc)
+LPVOID nightshade::Injection::AllocateAndWriteMemory(HANDLE hProc)
 {
 	if (m_data->injMethod == InjMethod::IM_LoadLibraryEx)
 	{
@@ -87,6 +91,92 @@ LPVOID nightshade::Injection::AllocateMemory(HANDLE hProc)
 			LOG(3, L"Unable to VirtualAllocEx Memory.");
 		}
 	}
+	else if (m_data->injMethod == InjMethod::IM_ManualMap)
+	{
+		BYTE* pSrcData = nullptr;
+		IMAGE_DOS_HEADER* pOldDOSHeader = nullptr;
+		IMAGE_NT_HEADERS* pOldNtHeader = nullptr;
+		IMAGE_OPTIONAL_HEADER* pOldOptHeader = nullptr;
+		IMAGE_FILE_HEADER* pOldFileHeader = nullptr;
+		BYTE* pTargetBase = nullptr;
+
+		std::ifstream dllFile(m_data->dllPath, std::ios::binary | std::ios::ate);
+		if (dllFile.fail())
+		{
+			LOG(3, L"Unable to load DLL file. %08X", (DWORD)dllFile.rdstate());
+			return 0;
+		}
+
+		auto fileSize = dllFile.tellg();
+		if (fileSize < 0x1000)
+		{
+			LOG(3, L"Invalid file size");
+			dllFile.close();
+			return 0;
+		}
+
+		pSrcData = new BYTE[SCast<UINT_PTR>(fileSize)];
+		if (!pSrcData)
+		{
+			LOG(3, L"Memory allocation failed for loading DLL.");
+			dllFile.close();
+			return 0;
+		}
+		
+		dllFile.seekg(0, std::ios::beg);
+		dllFile.read(RCast<char*>(pSrcData), fileSize);
+		dllFile.close();
+
+		if (RCast<IMAGE_DOS_HEADER*>(pSrcData)->e_magic != 0x5A4D) // "MZ"
+		{
+			LOG(3, L"Invalid File type.");
+			delete[] pSrcData;
+			return 0;
+		}
+		pOldDOSHeader = RCast<IMAGE_DOS_HEADER*>(pSrcData);
+		pOldNtHeader = RCast<IMAGE_NT_HEADERS*>(pSrcData + pOldDOSHeader->e_lfanew);
+		pOldOptHeader = &pOldNtHeader->OptionalHeader;
+		pOldFileHeader = &pOldNtHeader->FileHeader;
+
+		pTargetBase = RCast<BYTE*>(VirtualAllocEx(hProc, RCast<void*>(pOldOptHeader->ImageBase), pOldOptHeader->SizeOfImage, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+		if (!pTargetBase)
+		{
+			pTargetBase = RCast<BYTE*>(VirtualAllocEx(hProc, nullptr, pOldOptHeader->SizeOfImage, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+			if (!pTargetBase)
+			{
+				LOG(3, L"Failed to allocate memory in remote process.Error: %s", GetLastErrorAsString(GetLastError()));
+				delete[] pSrcData;
+				return 0;
+			}
+		}
+
+		MANUAL_MAPPING_DATA data{ 0 };
+		data.pGetProcAddress = RCast<f_GetProcAddress>(GetProcAddress);
+		data.pLoadLibraryA = LoadLibraryA;
+
+		auto* pSectionHeader = IMAGE_FIRST_SECTION(pOldNtHeader);
+		for (UINT i = 0; i != pOldFileHeader->NumberOfSections; i++, pSectionHeader++)
+		{
+			if (pSectionHeader->SizeOfRawData)
+			{
+				if (!WriteProcessMemory(hProc, pTargetBase + pSectionHeader->VirtualAddress, pSrcData + pSectionHeader->PointerToRawData, pSectionHeader->SizeOfRawData, nullptr))
+				{
+					LOG(3, L"Unable to WriteProcessMemory. Error: %s", GetLastErrorAsString(GetLastError()));
+					delete[] pSrcData;
+					VirtualFreeEx(hProc, pTargetBase, 0, MEM_RELEASE);
+					return 0;
+				}
+			}
+		}
+
+		memcpy(pSrcData, &data, sizeof(data));
+		WriteProcessMemory(hProc, pTargetBase, pSrcData, 0x1000, nullptr);
+
+		delete[] pSrcData;
+
+		return pTargetBase;
+	}
+
 	return 0;
 }
 
@@ -94,7 +184,7 @@ LPVOID nightshade::Injection::CreateEntryPoint(LPVOID lpMemAddress, HANDLE hProc
 {
 	if (m_data->injMethod == InjMethod::IM_LoadLibraryEx)
 	{
-		HMODULE hKernel32 = GetModuleHandle(L"Kernel32");
+		HMODULE hKernel32 = GetModuleHandle("Kernel32");
 		if (hKernel32 != NULL)
 		{
 			LOG(1, L"Got handle on Kernel32 0x%08X", hKernel32);
@@ -108,6 +198,19 @@ LPVOID nightshade::Injection::CreateEntryPoint(LPVOID lpMemAddress, HANDLE hProc
 	else if (m_data->injMethod == InjMethod::IM_LdrLoadDll)
 	{
 		
+	}
+	else if (m_data->injMethod == InjMethod::IM_ManualMap)
+	{
+		void* pShellcode = VirtualAllocEx(hProc, nullptr, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+		if (!pShellcode)
+		{
+			LOG(3, L"Failed to allocate memory in remote process. Error: %s", GetLastErrorAsString(GetLastError()));
+			Cleanup(nullptr, lpMemAddress, hProc);
+			return 0;
+		}
+
+		WriteProcessMemory(hProc, pShellcode, Shellcode, 0x1C8 * 1.5, nullptr); //0x1C8 is the exact size of the compiled function, we'll pad with 1.5x bytes
+		return pShellcode;
 	}
 	return 0;
 }
@@ -128,7 +231,7 @@ void nightshade::Injection::Cleanup(LPVOID lpEntryPoint, LPVOID lpMemAddress, HA
 {
 	if (lpEntryPoint)
 	{
-
+		
 	}
 
 	if (lpMemAddress)
@@ -159,7 +262,7 @@ bool nightshade::Injection::REQueueAPC(LPVOID lpEntryPoint, LPVOID lpMemoryAddre
 				CloseHandle(hThread);
 			}
 		}
-		return true;
+		return didQueueAPC;
 	}
 	LOG(3, L"Couldnt find any threads for process %d", GetProcessId(hProc));
 	return false;

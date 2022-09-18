@@ -1,6 +1,7 @@
 #pragma once
 #include <Windows.h>
 #include <TlHelp32.h>
+#include <fstream>
 #include "Types.h"
 #include "Utils.h"
 #include "Logger.h"
@@ -18,7 +19,7 @@ namespace nightshade {
 		virtual bool Inject();
 	private:
 		virtual HANDLE GetProcHandle();
-		virtual LPVOID AllocateMemory(HANDLE hProc);
+		virtual LPVOID AllocateAndWriteMemory(HANDLE hProc);
 		virtual LPVOID CreateEntryPoint(LPVOID lpMemAddress, HANDLE hProc);
 		virtual bool ExecuteEntryPoint(LPVOID lpEntryPoint, LPVOID lpMemAddress, HANDLE hProc);
 		//Possibly need to do a va list here? for param
