@@ -1,3 +1,0 @@
-﻿  Injection.cpp
-H:\C++\HoneyPot\nightshade\Logger.h(38,3): warning C4002: too many arguments for function-like macro invocation '__crt_va_end'
-  nightshade.vcxproj -> H:\C++\HoneyPot\x64\Release\nightshade.lib
