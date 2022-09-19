@@ -21,7 +21,7 @@ struct MANUAL_MAPPING_DATA {
 #define RELOC_FLAG RELOC_FLAG32
 #endif
 
-void __stdcall Shellcode(MANUAL_MAPPING_DATA* data)
+void __stdcall ManualMapShellcode(MANUAL_MAPPING_DATA* data)
 {
 	BYTE* pBase = RCast<BYTE*>(data);
 	auto* pOpt = &RCast<IMAGE_NT_HEADERS*>(pBase + RCast<IMAGE_DOS_HEADER*>(pBase)->e_lfanew)->OptionalHeader;
@@ -94,4 +94,24 @@ void __stdcall Shellcode(MANUAL_MAPPING_DATA* data)
 	_DllMain(pBase, DLL_PROCESS_ATTACH, nullptr);
 
 	data->hMod = RCast<HINSTANCE>(pBase);
+}
+
+using f_LdrLoadDll = NTSTATUS(NTAPI*)(PWCHAR, ULONG, PUNICODE_STRING, PHANDLE);
+using f_RtlInitUnicodeString = void(NTAPI*)(PUNICODE_STRING, PCWSTR);
+
+struct LDR_LOAD_DLL_DATA {
+	f_LdrLoadDll pLdrLoadDll;
+	f_RtlInitUnicodeString pRtlInitUnicodeString;
+	const wchar_t* dllName;
+	HANDLE hDll;
+};
+
+void __stdcall LdrLoadDllShellcode(LDR_LOAD_DLL_DATA* data)
+{
+	HANDLE hDll = 0;
+	f_LdrLoadDll _LdrLoadDll = data->pLdrLoadDll;
+	f_RtlInitUnicodeString _RltInitUnicodeString = data->pRtlInitUnicodeString;
+	UNICODE_STRING unicodePath;
+	_RltInitUnicodeString(&unicodePath, data->dllName);
+	_LdrLoadDll(NULL, 0, &unicodePath, &hDll);
 }

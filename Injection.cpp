@@ -29,6 +29,7 @@ bool nightshade::Injection::Inject()
 				LPVOID memoryAddress = AllocateAndWriteMemory(hProc);
 				if (memoryAddress)
 				{
+					LOG(1, L"lParam data is 0x%08X", memoryAddress);
 					LPVOID entryPoint = CreateEntryPoint(memoryAddress, hProc);
 					if (entryPoint == NULL)
 					{
@@ -89,6 +90,35 @@ LPVOID nightshade::Injection::AllocateAndWriteMemory(HANDLE hProc)
 		}
 		else {
 			LOG(3, L"Unable to VirtualAllocEx Memory.");
+		}
+	}
+	else if (m_data->injMethod == InjMethod::IM_LdrLoadDll)
+	{
+		LDR_LOAD_DLL_DATA data{ 0 };
+		data.pLdrLoadDll = LdrLoadDll;
+		data.pRtlInitUnicodeString = RtlInitUnicodeString;
+		
+		LPVOID dllName = VirtualAllocEx(hProc, nullptr, (wcslen(m_data->dllPath) + 1) * sizeof(wchar_t), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+		if (dllName)
+		{
+			if (WriteProcessMemory(hProc, dllName, m_data->dllPath, (wcslen(m_data->dllPath) + 1) * sizeof(wchar_t), nullptr)) {
+				data.dllName = RCast<const wchar_t*>(dllName);
+				LPVOID dataStructAddr = VirtualAllocEx(hProc, nullptr, sizeof(data), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+				if (dataStructAddr)
+				{
+					if (WriteProcessMemory(hProc, dataStructAddr, &data, sizeof(data), nullptr))
+					{
+						LDR_LOAD_DLL_DATA tempData{ 0 };
+						ReadProcessMemory(hProc, dataStructAddr, &tempData, sizeof(data), nullptr);
+						return dataStructAddr;
+					}
+				}
+				else {
+					LOG(3, L"Unable to Virtual Alloc memory");
+					delete& data;
+					return 0;
+				}
+			}
 		}
 	}
 	else if (m_data->injMethod == InjMethod::IM_ManualMap)
@@ -197,11 +227,7 @@ LPVOID nightshade::Injection::CreateEntryPoint(LPVOID lpMemAddress, HANDLE hProc
 	}
 	else if (m_data->injMethod == InjMethod::IM_LdrLoadDll)
 	{
-		
-	}
-	else if (m_data->injMethod == InjMethod::IM_ManualMap)
-	{
-		void* pShellcode = VirtualAllocEx(hProc, nullptr, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+		LPVOID pShellcode = VirtualAllocEx(hProc, nullptr, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
 		if (!pShellcode)
 		{
 			LOG(3, L"Failed to allocate memory in remote process. Error: %s", GetLastErrorAsString(GetLastError()));
@@ -209,7 +235,20 @@ LPVOID nightshade::Injection::CreateEntryPoint(LPVOID lpMemAddress, HANDLE hProc
 			return 0;
 		}
 
-		WriteProcessMemory(hProc, pShellcode, Shellcode, 0x1C8 * 1.5, nullptr); //0x1C8 is the exact size of the compiled function, we'll pad with 1.5x bytes
+		WriteProcessMemory(hProc, pShellcode, LdrLoadDllShellcode, 0x1C8, nullptr); //0x1C8 is the exact size of the compiled function, we'll pad with 1.5x bytes
+		return pShellcode;
+	}
+	else if (m_data->injMethod == InjMethod::IM_ManualMap)
+	{
+		LPVOID pShellcode = VirtualAllocEx(hProc, nullptr, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+		if (!pShellcode)
+		{
+			LOG(3, L"Failed to allocate memory in remote process. Error: %s", GetLastErrorAsString(GetLastError()));
+			Cleanup(nullptr, lpMemAddress, hProc);
+			return 0;
+		}
+
+		WriteProcessMemory(hProc, pShellcode, ManualMapShellcode, 0x1C8 * 1.5, nullptr); //0x1C8 is the exact size of the compiled function, we'll pad with 1.5x bytes
 		return pShellcode;
 	}
 	return 0;

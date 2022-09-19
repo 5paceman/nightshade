@@ -31,7 +31,7 @@ enum class Architecture {
 };
 
 typedef struct InjectionData {
-	wchar_t*           dllPath;
+	wchar_t            dllPath[MAX_PATH];
 	DWORD              pID;
 	DWORD              flags;
 	InjMethod          injMethod;

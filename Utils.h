@@ -2,7 +2,9 @@
 #include <windows.h>
 #include <tlhelp32.h>
 #include <ImageHlp.h>
-
+#include <string>
+#include <locale>
+#include <codecvt>
 #include "Types.h"
 #include "Logger.h"
 #include <vector>
@@ -176,5 +178,15 @@ namespace nightshade {
 		case Architecture::UNKNOWN:
 			return L"Unknown";
 		}
+	}
+
+	inline std::wstring GetLastErrorAsString(DWORD error)
+	{
+		if (error == 0)
+			return std::wstring(L"No Error");
+
+		std::string errorMessage = std::system_category().message(error);
+		std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+		return converter.from_bytes(errorMessage);
 	}
 }
