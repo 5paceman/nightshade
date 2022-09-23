@@ -24,11 +24,11 @@ struct MANUAL_MAPPING_DATA {
 void __stdcall ManualMapShellcode(MANUAL_MAPPING_DATA* data)
 {
 	BYTE* pBase = RCast<BYTE*>(data);
-	auto* pOpt = &RCast<IMAGE_NT_HEADERS*>(pBase + RCast<IMAGE_DOS_HEADER*>(pBase)->e_lfanew)->OptionalHeader;
+	IMAGE_OPTIONAL_HEADER* pOpt = &RCast<IMAGE_NT_HEADERS*>(pBase + RCast<IMAGE_DOS_HEADER*>(pBase)->e_lfanew)->OptionalHeader;
 
-	auto _LoadLibraryA = data->pLoadLibraryA;
-	auto _GetProcAddress = data->pGetProcAddress;
-	auto _DllMain = RCast<f_DLL_ENTRY_POINT>(pBase + pOpt->AddressOfEntryPoint);
+	f_LoadLibraryA _LoadLibraryA = data->pLoadLibraryA;
+	f_GetProcAddress _GetProcAddress = data->pGetProcAddress;
+	f_DLL_ENTRY_POINT _DllMain = RCast<f_DLL_ENTRY_POINT>(pBase + pOpt->AddressOfEntryPoint);
 
 	BYTE* LocationDelta = pBase - pOpt->ImageBase;
 	if (LocationDelta)
@@ -36,7 +36,7 @@ void __stdcall ManualMapShellcode(MANUAL_MAPPING_DATA* data)
 		if (!pOpt->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size)
 			return;
 
-		auto* pRelocData = RCast<IMAGE_BASE_RELOCATION*>(pBase + pOpt->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
+		IMAGE_BASE_RELOCATION* pRelocData = RCast<IMAGE_BASE_RELOCATION*>(pBase + pOpt->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
 		while (pRelocData->VirtualAddress)
 		{
 			UINT AmountOfEntry = (pRelocData->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD);
@@ -55,7 +55,7 @@ void __stdcall ManualMapShellcode(MANUAL_MAPPING_DATA* data)
 
 	if (pOpt->DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].Size)
 	{
-		auto* pImportDesc = RCast<IMAGE_IMPORT_DESCRIPTOR*>(pBase + pOpt->DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
+		IMAGE_IMPORT_DESCRIPTOR* pImportDesc = RCast<IMAGE_IMPORT_DESCRIPTOR*>(pBase + pOpt->DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
 		while (pImportDesc->Name)
 		{
 			char* szMod = RCast<char*>(pBase + pImportDesc->Name);
@@ -83,8 +83,8 @@ void __stdcall ManualMapShellcode(MANUAL_MAPPING_DATA* data)
 
 	if (pOpt->DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS].Size)
 	{
-		auto* pTLS = RCast<IMAGE_TLS_DIRECTORY*>(pBase + pOpt->DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS].VirtualAddress);
-		auto* pCallback = RCast<PIMAGE_TLS_CALLBACK*>(pTLS->AddressOfCallBacks);
+		IMAGE_TLS_DIRECTORY* pTLS = RCast<IMAGE_TLS_DIRECTORY*>(pBase + pOpt->DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS].VirtualAddress);
+		PIMAGE_TLS_CALLBACK* pCallback = RCast<PIMAGE_TLS_CALLBACK*>(pTLS->AddressOfCallBacks);
 		for (; pCallback && *pCallback; pCallback++)
 		{
 			(*pCallback)(pBase, DLL_PROCESS_ATTACH, nullptr);

@@ -9,7 +9,8 @@
 enum class InjMethod {
 	IM_LoadLibraryEx,
 	IM_LdrLoadDll,
-	IM_ManualMap
+	IM_ManualMap,
+	IM_NONE
 };
 
 struct WindowEnumData
@@ -21,7 +22,8 @@ struct WindowEnumData
 enum class RemoteExecMethod {
 	RE_NtCreateThreadEx,
 	RE_HijackThread,
-	RE_QueueUserAPC
+	RE_QueueUserAPC,
+	RE_NONE
 };
 
 enum class Architecture {

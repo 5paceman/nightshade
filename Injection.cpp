@@ -103,14 +103,18 @@ LPVOID nightshade::Injection::AllocateAndWriteMemory(HANDLE hProc)
 		{
 			if (WriteProcessMemory(hProc, dllName, m_data->dllPath, (wcslen(m_data->dllPath) + 1) * sizeof(wchar_t), nullptr)) {
 				data.dllName = RCast<const wchar_t*>(dllName);
+				LOG(1, L"Dll Name at 0x%08X", dllName);
 				LPVOID dataStructAddr = VirtualAllocEx(hProc, nullptr, sizeof(data), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 				if (dataStructAddr)
 				{
 					if (WriteProcessMemory(hProc, dataStructAddr, &data, sizeof(data), nullptr))
 					{
-						LDR_LOAD_DLL_DATA tempData{ 0 };
-						ReadProcessMemory(hProc, dataStructAddr, &tempData, sizeof(data), nullptr);
 						return dataStructAddr;
+					}
+					else {
+						LOG(3, L"Unable to Write Process memory, Error %s", GetLastErrorAsString(GetLastError()));
+						delete& data;
+						return 0;
 					}
 				}
 				else {
@@ -119,6 +123,16 @@ LPVOID nightshade::Injection::AllocateAndWriteMemory(HANDLE hProc)
 					return 0;
 				}
 			}
+			else {
+				LOG(3, L"Unable to Write Process memory, Error %s", GetLastErrorAsString(GetLastError()));
+				delete& data;
+				return 0;
+			}
+		}
+		else {
+			LOG(3, L"Unable to Virtual Alloc memory");
+			delete& data;
+			return 0;
 		}
 	}
 	else if (m_data->injMethod == InjMethod::IM_ManualMap)
@@ -235,8 +249,9 @@ LPVOID nightshade::Injection::CreateEntryPoint(LPVOID lpMemAddress, HANDLE hProc
 			return 0;
 		}
 
-		WriteProcessMemory(hProc, pShellcode, LdrLoadDllShellcode, 0x1C8, nullptr); //0x1C8 is the exact size of the compiled function, we'll pad with 1.5x bytes
-		return pShellcode;
+		if (WriteProcessMemory(hProc, pShellcode, LdrLoadDllShellcode, 0x52 * 1.5, nullptr)) { //0x52 is the exact size of the compiled function, we'll pad with 1.5x bytes
+			return pShellcode;
+		}
 	}
 	else if (m_data->injMethod == InjMethod::IM_ManualMap)
 	{
@@ -248,8 +263,9 @@ LPVOID nightshade::Injection::CreateEntryPoint(LPVOID lpMemAddress, HANDLE hProc
 			return 0;
 		}
 
-		WriteProcessMemory(hProc, pShellcode, ManualMapShellcode, 0x1C8 * 1.5, nullptr); //0x1C8 is the exact size of the compiled function, we'll pad with 1.5x bytes
-		return pShellcode;
+		if(WriteProcessMemory(hProc, pShellcode, ManualMapShellcode, 0x1C8 * 1.5, nullptr)) { //0x1C8 is the exact size of the compiled function, we'll pad with 1.5x bytes
+			return pShellcode;
+		}
 	}
 	return 0;
 }
