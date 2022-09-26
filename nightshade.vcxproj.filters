@@ -33,6 +33,12 @@
     <ClInclude Include="Shellcode.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Internal.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Hooking.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Injection.cpp">

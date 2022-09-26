@@ -6,6 +6,7 @@
 #define INJ_CLEAR_PEH 0x0004
 #define INJ_SCRAMBLE_DLL 0x0008
 
+
 enum class InjMethod {
 	IM_LoadLibraryEx,
 	IM_LdrLoadDll,
