@@ -11,7 +11,7 @@ namespace nightshade {
 	template <class T>
 	inline bool Write(uintptr_t address, T value)
 	{
-		*RCast<uintptr_t*>(address) = value;
+		*RCast<T*>(address) = value;
 	}
 
 	inline uintptr_t ReadOffset(uintptr_t address, std::vector<uintptr_t>offsets)
