@@ -19,12 +19,14 @@ nightshade::Injection::~Injection()
 
 bool nightshade::Injection::Inject()
 {
-	if (IsElevatedProcess())
+	if (nightshade::Utils::IsElevatedProcess())
 	{
 		HANDLE hProc = GetProcHandle();
 		if (hProc)
 		{
-			if (IsDllCompatible(m_data->dllPath, hProc))
+			Architecture arch = nightshade::Utils::GetDLLArchitecture(m_data->dllPath);
+			m_data->is64bit = arch == Architecture::X64;
+			if (nightshade::Utils::IsDllCompatible(arch, hProc))
 			{
 				LPVOID memoryAddress = AllocateAndWriteMemory(hProc);
 				if (memoryAddress)
@@ -52,7 +54,7 @@ bool nightshade::Injection::Inject()
 			}
 		}
 		else {
-			LOG(3, L"Unable to get handle on process, error: %s", GetLastErrorAsString(GetLastError()).c_str());
+			LOG(3, L"Unable to get handle on process, error: %s", nightshade::Utils::GetLastErrorAsString(GetLastError()).c_str());
 			return false;
 		}
 	}
@@ -77,7 +79,7 @@ LPVOID nightshade::Injection::AllocateAndWriteMemory(HANDLE hProc)
 		if (lpDLLPathAddr)
 		{
 			LOG(1, L"Allocated Memory at 0x%08X", lpDLLPathAddr);
-			size_t bytesWritten = 0;
+			SIZE_T bytesWritten = 0;
 			if (WriteProcessMemory(hProc, lpDLLPathAddr, cPath, strlen(cPath) + 1, &bytesWritten))
 			{
 				LOG(1, L"BytesWritten: %d", bytesWritten);
@@ -95,8 +97,15 @@ LPVOID nightshade::Injection::AllocateAndWriteMemory(HANDLE hProc)
 	else if (m_data->injMethod == InjMethod::IM_LdrLoadDll)
 	{
 		LDR_LOAD_DLL_DATA data{ 0 };
-		data.pLdrLoadDll = LdrLoadDll;
-		data.pRtlInitUnicodeString = RtlInitUnicodeString;
+		uintptr_t LdrLoadDllPtr = nightshade::Utils::GetExportAddress(L"ntdll", "LdrLoadDll", hProc);
+		uintptr_t RtlInitUnicodeStringPtr = nightshade::Utils::GetExportAddress(L"ntdll", "RtlInitUnicodeString", hProc);
+		if (LdrLoadDllPtr == 0 || RtlInitUnicodeStringPtr == 0)
+		{
+			LOG(3, L"Unable to get func ptrs for LdrLoadDll data.");
+			return 0;
+		}
+		data.pLdrLoadDll = RCast<f_LdrLoadDll>(LdrLoadDllPtr);
+		data.pRtlInitUnicodeString = RCast<f_RtlInitUnicodeString>(RtlInitUnicodeStringPtr);
 		
 		LPVOID dllName = VirtualAllocEx(hProc, nullptr, (wcslen(m_data->dllPath) + 1) * sizeof(wchar_t), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 		if (dllName)
@@ -112,7 +121,7 @@ LPVOID nightshade::Injection::AllocateAndWriteMemory(HANDLE hProc)
 						return dataStructAddr;
 					}
 					else {
-						LOG(3, L"Unable to Write Process memory, Error %s", GetLastErrorAsString(GetLastError()));
+						LOG(3, L"Unable to Write Process memory, Error %s", nightshade::Utils::GetLastErrorAsString(GetLastError()));
 						delete& data;
 						return 0;
 					}
@@ -124,7 +133,7 @@ LPVOID nightshade::Injection::AllocateAndWriteMemory(HANDLE hProc)
 				}
 			}
 			else {
-				LOG(3, L"Unable to Write Process memory, Error %s", GetLastErrorAsString(GetLastError()));
+				LOG(3, L"Unable to Write Process memory, Error %s", nightshade::Utils::GetLastErrorAsString(GetLastError()));
 				delete& data;
 				return 0;
 			}
@@ -160,7 +169,7 @@ LPVOID nightshade::Injection::AllocateAndWriteMemory(HANDLE hProc)
 		}
 
 		pSrcData = new BYTE[SCast<UINT_PTR>(fileSize)];
-		if (!pSrcData)
+		if (!pSrcData) 
 		{
 			LOG(3, L"Memory allocation failed for loading DLL.");
 			dllFile.close();
@@ -188,12 +197,12 @@ LPVOID nightshade::Injection::AllocateAndWriteMemory(HANDLE hProc)
 			pTargetBase = RCast<BYTE*>(VirtualAllocEx(hProc, nullptr, pOldOptHeader->SizeOfImage, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
 			if (!pTargetBase)
 			{
-				LOG(3, L"Failed to allocate memory in remote process.Error: %s", GetLastErrorAsString(GetLastError()));
+				LOG(3, L"Failed to allocate memory in remote process.Error: %s", nightshade::Utils::GetLastErrorAsString(GetLastError()));
 				delete[] pSrcData;
 				return 0;
 			}
 		}
-
+		
 		MANUAL_MAPPING_DATA data{ 0 };
 		data.pGetProcAddress = RCast<f_GetProcAddress>(GetProcAddress);
 		data.pLoadLibraryA = LoadLibraryA;
@@ -205,7 +214,7 @@ LPVOID nightshade::Injection::AllocateAndWriteMemory(HANDLE hProc)
 			{
 				if (!WriteProcessMemory(hProc, pTargetBase + pSectionHeader->VirtualAddress, pSrcData + pSectionHeader->PointerToRawData, pSectionHeader->SizeOfRawData, nullptr))
 				{
-					LOG(3, L"Unable to WriteProcessMemory. Error: %s", GetLastErrorAsString(GetLastError()));
+					LOG(3, L"Unable to WriteProcessMemory. Error: %s", nightshade::Utils::GetLastErrorAsString(GetLastError()));
 					delete[] pSrcData;
 					VirtualFreeEx(hProc, pTargetBase, 0, MEM_RELEASE);
 					return 0;
@@ -214,7 +223,7 @@ LPVOID nightshade::Injection::AllocateAndWriteMemory(HANDLE hProc)
 		}
 
 		memcpy(pSrcData, &data, sizeof(data));
-		WriteProcessMemory(hProc, pTargetBase, pSrcData, 0x1000, nullptr);
+		WriteProcessMemory(hProc, pTargetBase, pSrcData, fileSize, nullptr);
 
 		delete[] pSrcData;
 
@@ -224,19 +233,18 @@ LPVOID nightshade::Injection::AllocateAndWriteMemory(HANDLE hProc)
 	return 0;
 }
 
+
 LPVOID nightshade::Injection::CreateEntryPoint(LPVOID lpMemAddress, HANDLE hProc)
 {
 	if (m_data->injMethod == InjMethod::IM_LoadLibraryEx)
 	{
-		HMODULE hKernel32 = GetModuleHandle("Kernel32");
-		if (hKernel32 != NULL)
-		{
-			LOG(1, L"Got handle on Kernel32 0x%08X", hKernel32);
-			return (LPVOID)GetProcAddress(hKernel32, "LoadLibraryA");
+		uintptr_t LoadLibraryAPtr = nightshade::Utils::GetExportAddress(L"Kernel32", "LoadLibraryA", hProc);
+		if (LoadLibraryAPtr != 0) {
+			return RCast<LPVOID>(LoadLibraryAPtr);
 		}
 		else {
 			Cleanup(nullptr, lpMemAddress, hProc);
-			LOG(3, L"Not able to get handle on Kernel32");
+			LOG(3, L"Not able to get func addr for LoadLibraryA");
 		}
 	}
 	else if (m_data->injMethod == InjMethod::IM_LdrLoadDll)
@@ -244,12 +252,12 @@ LPVOID nightshade::Injection::CreateEntryPoint(LPVOID lpMemAddress, HANDLE hProc
 		LPVOID pShellcode = VirtualAllocEx(hProc, nullptr, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
 		if (!pShellcode)
 		{
-			LOG(3, L"Failed to allocate memory in remote process. Error: %s", GetLastErrorAsString(GetLastError()));
+			LOG(3, L"Failed to allocate memory in remote process. Error: %s", nightshade::Utils::GetLastErrorAsString(GetLastError()));
 			Cleanup(nullptr, lpMemAddress, hProc);
 			return 0;
 		}
 
-		if (WriteProcessMemory(hProc, pShellcode, LdrLoadDllShellcode, 0x52 * 1.5, nullptr)) { //0x52 is the exact size of the compiled function, we'll pad with 1.5x bytes
+		if (WriteProcessMemory(hProc, pShellcode, m_data->is64bit ? x64LdrLoadDllShellcode : x32LdrLoadDllShellcode, m_data->is64bit ? sizeof(x64LdrLoadDllShellcode) : sizeof(x32LdrLoadDllShellcode), nullptr)) {
 			return pShellcode;
 		}
 	}
@@ -258,14 +266,18 @@ LPVOID nightshade::Injection::CreateEntryPoint(LPVOID lpMemAddress, HANDLE hProc
 		LPVOID pShellcode = VirtualAllocEx(hProc, nullptr, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
 		if (!pShellcode)
 		{
-			LOG(3, L"Failed to allocate memory in remote process. Error: %s", GetLastErrorAsString(GetLastError()));
+			LOG(3, L"Failed to allocate memory in remote process. Error: %s", nightshade::Utils::GetLastErrorAsString(GetLastError()));
 			Cleanup(nullptr, lpMemAddress, hProc);
 			return 0;
 		}
 
-		if(WriteProcessMemory(hProc, pShellcode, ManualMapShellcode, 0x1C8 * 1.5, nullptr)) { //0x1C8 is the exact size of the compiled function, we'll pad with 1.5x bytes
+		if (WriteProcessMemory(hProc, pShellcode, ManualMapShellcode, 0x1000, nullptr)) {
 			return pShellcode;
 		}
+
+		/*if (WriteProcessMemory(hProc, pShellcode, m_data->is64bit ? x64ManualMapShellcode : x32ManualMapShellcode, m_data->is64bit ? sizeof(x64ManualMapShellcode) : sizeof(x32ManualMapShellcode), nullptr)) {
+			return pShellcode;
+		}*/
 	}
 	return 0;
 }
@@ -304,7 +316,7 @@ void nightshade::Injection::Cleanup(LPVOID lpEntryPoint, LPVOID lpMemAddress, HA
 bool nightshade::Injection::REQueueAPC(LPVOID lpEntryPoint, LPVOID lpMemoryAddress, HANDLE hProc)
 {
 	std::vector<DWORD> tIDs;
-	if (GetThreadsFromProcess(GetProcessId(hProc), tIDs)) {
+	if (nightshade::Utils::GetThreadsFromProcess(GetProcessId(hProc), tIDs)) {
 		bool didQueueAPC = false;
 		for (DWORD tID : tIDs)
 		{
@@ -325,7 +337,7 @@ bool nightshade::Injection::REQueueAPC(LPVOID lpEntryPoint, LPVOID lpMemoryAddre
 
 bool nightshade::Injection::RENtCreateThread(LPVOID lpEntryPoint, LPVOID lpMemoryAddress, HANDLE hProc)
 {
-	if (!AdjustPriviledges())
+	if (!nightshade::Utils::AdjustPriviledges())
 	{
 		LOG(3, L"Failed to elevate priviledges");
 		return false;
@@ -350,7 +362,7 @@ bool nightshade::Injection::RENtCreateThread(LPVOID lpEntryPoint, LPVOID lpMemor
 		}
 	}
 	else {
-		LOG(3, L"Unable to create thread with NtCreateThreadEx. NTSTATUS: 0x%08X \nError: %s", status, GetLastErrorAsString(GetLastError()).c_str());
+		LOG(3, L"Unable to create thread with NtCreateThreadEx. NTSTATUS: 0x%08X \nError: %s", status, nightshade::Utils::GetLastErrorAsString(GetLastError()).c_str());
 	}
 	return false;
 }

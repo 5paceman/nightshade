@@ -33,10 +33,14 @@ enum class Architecture {
 	UNKNOWN
 };
 
-typedef struct InjectionData {
-	wchar_t            dllPath[MAX_PATH];
-	DWORD              pID;
-	DWORD              flags;
-	InjMethod          injMethod;
-	RemoteExecMethod   reMethod;
-} InjectionData, * pInjectionData;
+struct Vector2 {
+	float x, y;
+};
+
+struct Vector3 {
+	float x, y, z;
+};
+
+struct Vector4 {
+	float x, y, z, w;
+};

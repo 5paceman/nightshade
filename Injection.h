@@ -7,6 +7,17 @@
 #include "Logger.h"
 #include "NtDefinitions.h"
 
+#define _ITERATOR_DEBUG_LEVEL 2
+
+typedef struct InjectionData {
+	wchar_t            dllPath[MAX_PATH];
+	DWORD              pID;
+	DWORD              flags;
+	bool               is64bit;
+	InjMethod          injMethod;
+	RemoteExecMethod   reMethod;
+} InjectionData, * pInjectionData;
+
 namespace nightshade {
 	class Injection {
 	private:

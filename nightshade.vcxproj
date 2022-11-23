@@ -70,6 +70,22 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <IncludePath>F:\C++\Libraries\DirectX 2010\Include;$(IncludePath)</IncludePath>
+    <LibraryPath>F:\C++\Libraries\DirectX 2010\Lib\x86;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <IncludePath>F:\C++\Libraries\DirectX 2010\Include;$(IncludePath)</IncludePath>
+    <LibraryPath>F:\C++\Libraries\DirectX 2010\Lib\x86;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <IncludePath>F:\C++\Libraries\DirectX 2010\Include;$(IncludePath)</IncludePath>
+    <LibraryPath>F:\C++\Libraries\DirectX 2010\Lib\x86;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <IncludePath>F:\C++\Libraries\DirectX 2010\Include;$(IncludePath)</IncludePath>
+    <LibraryPath>F:\C++\Libraries\DirectX 2010\Lib\x64;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
@@ -77,6 +93,7 @@
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AssemblerOutput>AssemblyAndSourceCode</AssemblerOutput>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -92,6 +109,8 @@
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AssemblerOutput>AssemblyAndSourceCode</AssemblerOutput>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -122,6 +141,7 @@
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AssemblerOutput>AssemblyAndSourceCode</AssemblerOutput>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -131,17 +151,30 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="DirectInputHelper.h" />
+    <ClInclude Include="Module.h" />
+    <ClInclude Include="ModuleManager.h" />
+    <ClInclude Include="Patcher.h" />
+    <ClInclude Include="DirectXHelper.h" />
+    <ClInclude Include="DrawHelper.h" />
     <ClInclude Include="Hooking.h" />
     <ClInclude Include="Injection.h" />
     <ClInclude Include="Internal.h" />
     <ClInclude Include="Logger.h" />
+    <ClInclude Include="MathHelper.h" />
     <ClInclude Include="NtDefinitions.h" />
+    <ClInclude Include="PatternScanner.h" />
     <ClInclude Include="Shellcode.h" />
+    <ClInclude Include="StringEncrypt.h" />
+    <ClInclude Include="Timer.h" />
     <ClInclude Include="Types.h" />
     <ClInclude Include="Utils.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="DrawHelper.cpp" />
     <ClCompile Include="Injection.cpp" />
+    <ClCompile Include="Patcher.cpp" />
+    <ClCompile Include="PatternScanner.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
