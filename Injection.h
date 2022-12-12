@@ -7,7 +7,14 @@
 #include "Logger.h"
 #include "NtDefinitions.h"
 
-#define _ITERATOR_DEBUG_LEVEL 2
+enum INJ_OPTIONS {
+	HIJACK_HANDLE = 0x01,
+	MM_SEH = 0x2,
+	MM_TLS = 0x4,
+	MM_CLEAR_PE = 0x8,
+	MM_FAKE_PE = 0x10,
+	CLOAK_THREAD = 0x20
+};
 
 typedef struct InjectionData {
 	wchar_t            dllPath[MAX_PATH];
@@ -22,6 +29,12 @@ namespace nightshade {
 	class Injection {
 	private:
 		InjectionData* m_data;
+
+		fNtQueryInformationThread NtQueryInformationThread;
+		fNtSetInformationThread NtSetInformationThread;
+		fNtGetContextThread NtGetContextThread;
+		fNtSetContextThread NtSetContextThread;
+		fNtCreateThreadEx NtCreateThreadEx;
 	public:
 		Injection(InjectionData* data);
 		~Injection();
@@ -38,5 +51,9 @@ namespace nightshade {
 		virtual bool REQueueAPC(LPVOID lpEntryPoint, LPVOID lpMemoryAddress, HANDLE hProc);
 		virtual bool RENtCreateThread(LPVOID lpEntryPoint, LPVOID lpMemoryAddress, HANDLE hProc);
 		virtual bool REHijackThread(LPVOID lpEntryPoint, LPVOID lpMemoryAddress, HANDLE hProc);
+
+		virtual bool HideThreadFromDebugger(HANDLE hThread, HANDLE hProc);
+		virtual bool HideThreadStartAddress(HANDLE hThread, LPVOID lpEntryPoint, HANDLE hProc);
+
 	};
 }

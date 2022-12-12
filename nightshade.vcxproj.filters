@@ -19,12 +19,15 @@
     <Filter Include="Header Files\Modules">
       <UniqueIdentifier>{461d2f38-9268-4041-b747-c20f51739b7d}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\Utils">
+      <UniqueIdentifier>{e6dfe976-93e4-4b28-9784-0ee53fbf0efe}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Utils\Filelib">
+      <UniqueIdentifier>{2040da42-716a-4bba-bd03-5611050b7db8}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Types.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="Utils.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Logger.h">
@@ -74,6 +77,12 @@
     </ClInclude>
     <ClInclude Include="DirectInputHelper.h">
       <Filter>Header Files\Helpers</Filter>
+    </ClInclude>
+    <ClInclude Include="Utils.h">
+      <Filter>Header Files\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="NSD_FileHeaders.h">
+      <Filter>Header Files\Utils\Filelib</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

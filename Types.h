@@ -1,11 +1,6 @@
 #pragma once
 #include <Windows.h>
 
-#define INJ_HIJACK_HANDLE 0x0001
-#define INJ_UNLINK_PEB 0x0002
-#define INJ_CLEAR_PEH 0x0004
-#define INJ_SCRAMBLE_DLL 0x0008
-
 
 enum class InjMethod {
 	IM_LoadLibraryEx,

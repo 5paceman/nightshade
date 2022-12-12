@@ -1,7 +1,6 @@
 #pragma once
 #include <windows.h>
 
-
 #define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
 #define NT_FAIL(Status) (((NTSTATUS)(Status)) < 0)
 
@@ -135,13 +134,81 @@ typedef struct _LDR_DATA_TABLE_ENTRY
     PVOID PatchInformation;
 } LDR_DATA_TABLE_ENTRY, * PLDR_DATA_TABLE_ENTRY;
 
+typedef enum _THREADINFOCLASS {
+    ThreadBasicInformation = 0,
+    ThreadTimes = 1,
+    ThreadPriority = 2,
+    ThreadBasePriority = 3,
+    ThreadAffinityMask = 4,
+    ThreadImpersonationToken = 5,
+    ThreadDescriptorTableEntry = 6,
+    ThreadEnableAlignmentFaultFixup = 7,
+    ThreadEventPair_Reusable = 8,
+    ThreadQuerySetWin32StartAddress = 9,
+    ThreadZeroTlsCell = 10,
+    ThreadPerformanceCount = 11,
+    ThreadAmILastThread = 12,
+    ThreadIdealProcessor = 13,
+    ThreadPriorityBoost = 14,
+    ThreadSetTlsArrayAddress = 15,   // Obsolete
+    ThreadIsIoPending = 16,
+    ThreadHideFromDebugger = 17,
+    ThreadBreakOnTermination = 18,
+    ThreadSwitchLegacyState = 19,
+    ThreadIsTerminated = 20,
+    ThreadLastSystemCall = 21,
+    ThreadIoPriority = 22,
+    ThreadCycleTime = 23,
+    ThreadPagePriority = 24,
+    ThreadActualBasePriority = 25,
+    ThreadTebInformation = 26,
+    ThreadCSwitchMon = 27,   // Obsolete
+    ThreadCSwitchPmu = 28,
+    ThreadWow64Context = 29,
+    ThreadGroupInformation = 30,
+    ThreadUmsInformation = 31,   // UMS
+    ThreadCounterProfiling = 32,
+    ThreadIdealProcessorEx = 33,
+    ThreadCpuAccountingInformation = 34,
+    ThreadSuspendCount = 35,
+    ThreadActualGroupAffinity = 41,
+    ThreadDynamicCodePolicyInfo = 42,
+    MaxThreadInfoClass = 45,
+} THREADINFOCLASS;
 
-#pragma comment(lib, "ntdll.lib")
-EXTERN_C NTSYSAPI NTSTATUS NTAPI NtCreateThreadEx(PHANDLE,ACCESS_MASK, LPVOID, HANDLE, LPTHREAD_START_ROUTINE, LPVOID,BOOL, SIZE_T, SIZE_T, SIZE_T, LPVOID);
+using fNtCreateThreadEx = NTSTATUS(__stdcall*)(HANDLE* pHandle, ACCESS_MASK DesiredAccess, void* pAttr, HANDLE hProc, void* pFunc, void* pArg, ULONG Flags, SIZE_T ZeroBits, SIZE_T StackSize, SIZE_T MaxStackSize, void* pAttrListOut);
+using fNtQueryInformationThread = NTSTATUS(__stdcall*)(HANDLE, THREADINFOCLASS, PVOID, ULONG, PULONG);
+using fNtSetInformationThread = NTSTATUS(__stdcall*)(HANDLE, THREADINFOCLASS, PVOID, ULONG);
+using fNtGetContextThread = NTSTATUS(__stdcall*)(HANDLE, PVOID);
+using fNtSetContextThread = NTSTATUS(__stdcall*)(HANDLE, PVOID);
 
 EXTERN_C NTSYSAPI NTSTATUS NTAPI LdrLoadDll(PWCHAR, ULONG, PUNICODE_STRING, PHANDLE);
 
-EXTERN_C NTSYSAPI void NTAPI RtlInitUnicodeString(PUNICODE_STRING, PCWSTR);
+EXTERN_C NTSYSAPI VOID NTAPI RtlInitUnicodeString(PUNICODE_STRING, PCWSTR);
 
+namespace nightshade
+{
+    namespace Utils {
 
+        template <class tFunc>
+        inline tFunc GetNTFunc(const char* funcName)
+        {
+            HMODULE hNtdll = GetModuleHandleA("ntdll.dll");
+            if (!hNtdll)
+            {
+                LOG(3, L"Unable to get NT Func '%s', can't get handle on ntdll.", nightshade::Utils::CStringToWString(funcName).c_str());
+                return 0;
+            }
+
+            uintptr_t procAddr = RCast<uintptr_t>(GetProcAddress(hNtdll, funcName));
+            if (!procAddr)
+            {
+                LOG(3, L"Unable to get NT Func '%s', can't GetProcAddress.", nightshade::Utils::CStringToWString(funcName).c_str());
+                return 0;
+            }
+
+            return RCast<tFunc>(procAddr);
+        }
+    }
+}
 

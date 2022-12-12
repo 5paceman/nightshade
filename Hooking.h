@@ -196,27 +196,6 @@ namespace nightshade {
 			return 0;
 		}
 
-		inline bool detectJmps32(uintptr_t addr)
-		{
-			if (*((BYTE*)addr) == 0xE9)
-			{
-				return true;
-			}
-
-			return false;
-		}
-
-		inline uintptr_t followJmps32(uintptr_t addr)
-		{
-			while (*((BYTE*)addr) == 0xE9)
-			{
-				intptr_t jmpTo = *(intptr_t*)(addr + 1);
-				addr = (addr + 5) + jmpTo;
-			}
-
-			return addr;
-		}
-
 		inline bool NopPatch(uintptr_t dest, size_t len)
 		{
 			DWORD oldProtection = 0;

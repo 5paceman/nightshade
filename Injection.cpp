@@ -10,6 +10,16 @@ nightshade::Injection::Injection(InjectionData* data)
 		LOG(1, L"DLL Path is empty.");
 	}
 	
+	NtQueryInformationThread = nightshade::Utils::GetNTFunc<fNtQueryInformationThread>("NtQueryInformationThread");
+	NtSetInformationThread = nightshade::Utils::GetNTFunc<fNtSetInformationThread>("NtSetInformationThread");
+	NtGetContextThread = nightshade::Utils::GetNTFunc<fNtGetContextThread>("NtGetContextThread");
+	NtSetContextThread = nightshade::Utils::GetNTFunc<fNtSetContextThread>("NtSetContextThread");
+	NtCreateThreadEx = nightshade::Utils::GetNTFunc<fNtCreateThreadEx>("NtCreateThreadEx");
+
+	if (!NtQueryInformationThread || !NtSetInformationThread || !NtGetContextThread || !NtSetContextThread || !NtCreateThreadEx)
+	{
+		LOG(3, L"Unable to get ntdll functions. Functionality may be limited.");
+	}
 }
 
 nightshade::Injection::~Injection()
@@ -25,7 +35,7 @@ bool nightshade::Injection::Inject()
 		if (hProc)
 		{
 			Architecture arch = nightshade::Utils::GetDLLArchitecture(m_data->dllPath);
-			m_data->is64bit = arch == Architecture::X64;
+			m_data->is64bit = (arch == Architecture::X64);
 			if (nightshade::Utils::IsDllCompatible(arch, hProc))
 			{
 				LPVOID memoryAddress = AllocateAndWriteMemory(hProc);
@@ -66,21 +76,19 @@ bool nightshade::Injection::Inject()
 
 HANDLE nightshade::Injection::GetProcHandle()
 {
-	return OpenProcess(PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_CREATE_THREAD, false, m_data->pID);
+	return OpenProcess(PROCESS_VM_WRITE | PROCESS_VM_READ | PROCESS_VM_OPERATION | PROCESS_CREATE_THREAD, false, m_data->pID);
 }
 
 LPVOID nightshade::Injection::AllocateAndWriteMemory(HANDLE hProc)
 {
 	if (m_data->injMethod == InjMethod::IM_LoadLibraryEx)
 	{
-		char cPath[MAX_PATH];
-		wcstombs_s(nullptr, cPath, m_data->dllPath, wcslen(m_data->dllPath));
-		LPVOID lpDLLPathAddr = VirtualAllocEx(hProc, nullptr, strlen(cPath) + 1, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+		LPVOID lpDLLPathAddr = VirtualAllocEx(hProc, nullptr, sizeof(m_data->dllPath), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 		if (lpDLLPathAddr)
 		{
 			LOG(1, L"Allocated Memory at 0x%08X", lpDLLPathAddr);
 			SIZE_T bytesWritten = 0;
-			if (WriteProcessMemory(hProc, lpDLLPathAddr, cPath, strlen(cPath) + 1, &bytesWritten))
+			if (WriteProcessMemory(hProc, lpDLLPathAddr, m_data->dllPath, sizeof(m_data->dllPath), &bytesWritten))
 			{
 				LOG(1, L"BytesWritten: %d", bytesWritten);
 				return lpDLLPathAddr;
@@ -97,8 +105,8 @@ LPVOID nightshade::Injection::AllocateAndWriteMemory(HANDLE hProc)
 	else if (m_data->injMethod == InjMethod::IM_LdrLoadDll)
 	{
 		LDR_LOAD_DLL_DATA data{ 0 };
-		uintptr_t LdrLoadDllPtr = nightshade::Utils::GetExportAddress(L"ntdll", "LdrLoadDll", hProc);
-		uintptr_t RtlInitUnicodeStringPtr = nightshade::Utils::GetExportAddress(L"ntdll", "RtlInitUnicodeString", hProc);
+		uintptr_t LdrLoadDllPtr = nightshade::Utils::GetProcAddressEx(hProc, L"ntdll", "LdrLoadDll");
+		uintptr_t RtlInitUnicodeStringPtr = nightshade::Utils::GetProcAddressEx(hProc, L"ntdll", "RtlInitUnicodeString");
 		if (LdrLoadDllPtr == 0 || RtlInitUnicodeStringPtr == 0)
 		{
 			LOG(3, L"Unable to get func ptrs for LdrLoadDll data.");
@@ -203,9 +211,26 @@ LPVOID nightshade::Injection::AllocateAndWriteMemory(HANDLE hProc)
 			}
 		}
 		
-		MANUAL_MAPPING_DATA data{ 0 };
-		data.pGetProcAddress = RCast<f_GetProcAddress>(GetProcAddress);
-		data.pLoadLibraryA = LoadLibraryA;
+
+		if (!m_data->is64bit)
+		{
+			MANUAL_MAPPING_DATA32 data{ 0 };
+			data.flags = m_data->flags;
+			data.pGetProcAddress = nightshade::Utils::GetProcAddressEx(hProc, L"Kernel32", "GetProcAddress");
+			data.pLoadLibraryA = nightshade::Utils::GetProcAddressEx(hProc, L"Kernel32", "LoadLibraryA");
+			memcpy(pSrcData, &data, sizeof(data));
+		}
+#ifdef _WIN64
+		else {
+			MANUAL_MAPPING_DATA64 data{ 0 };
+			data.flags = m_data->flags;
+			data.pGetProcAddress = nightshade::Utils::GetProcAddressEx(hProc, L"Kernel32", "GetProcAddress");
+			data.pLoadLibraryA = nightshade::Utils::GetProcAddressEx(hProc, L"Kernel32", "LoadLibraryA");
+			data.pRtlAddFunctionTable = nightshade::Utils::GetProcAddressEx(hProc, L"Kernel32", "RtlAddFunctionTable");
+			memcpy(pSrcData, &data, sizeof(data));
+		}
+#endif
+		
 
 		auto* pSectionHeader = IMAGE_FIRST_SECTION(pOldNtHeader);
 		for (UINT i = 0; i != pOldFileHeader->NumberOfSections; i++, pSectionHeader++)
@@ -222,9 +247,9 @@ LPVOID nightshade::Injection::AllocateAndWriteMemory(HANDLE hProc)
 			}
 		}
 
-		memcpy(pSrcData, &data, sizeof(data));
-		WriteProcessMemory(hProc, pTargetBase, pSrcData, fileSize, nullptr);
-
+		
+		WriteProcessMemory(hProc, pTargetBase, pSrcData, pOldNtHeader->OptionalHeader.SizeOfHeaders, nullptr);
+		LOG(1, L"DLL Mapped in at 0x%08X for 0x%08X bytes.", pTargetBase, fileSize);
 		delete[] pSrcData;
 
 		return pTargetBase;
@@ -238,13 +263,13 @@ LPVOID nightshade::Injection::CreateEntryPoint(LPVOID lpMemAddress, HANDLE hProc
 {
 	if (m_data->injMethod == InjMethod::IM_LoadLibraryEx)
 	{
-		uintptr_t LoadLibraryAPtr = nightshade::Utils::GetExportAddress(L"Kernel32", "LoadLibraryA", hProc);
+		uintptr_t LoadLibraryAPtr = nightshade::Utils::GetProcAddressEx(hProc, L"Kernel32", "LoadLibraryW");
 		if (LoadLibraryAPtr != 0) {
 			return RCast<LPVOID>(LoadLibraryAPtr);
 		}
 		else {
 			Cleanup(nullptr, lpMemAddress, hProc);
-			LOG(3, L"Not able to get func addr for LoadLibraryA");
+			LOG(3, L"Not able to get func addr for LoadLibraryW");
 		}
 	}
 	else if (m_data->injMethod == InjMethod::IM_LdrLoadDll)
@@ -263,7 +288,7 @@ LPVOID nightshade::Injection::CreateEntryPoint(LPVOID lpMemAddress, HANDLE hProc
 	}
 	else if (m_data->injMethod == InjMethod::IM_ManualMap)
 	{
-		LPVOID pShellcode = VirtualAllocEx(hProc, nullptr, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+		LPVOID pShellcode = VirtualAllocEx(hProc, nullptr, m_data->is64bit ? sizeof(x64ManualMapShellcode) : sizeof(x32ManualMapShellcode), MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
 		if (!pShellcode)
 		{
 			LOG(3, L"Failed to allocate memory in remote process. Error: %s", nightshade::Utils::GetLastErrorAsString(GetLastError()));
@@ -271,13 +296,9 @@ LPVOID nightshade::Injection::CreateEntryPoint(LPVOID lpMemAddress, HANDLE hProc
 			return 0;
 		}
 
-		if (WriteProcessMemory(hProc, pShellcode, ManualMapShellcode, 0x1000, nullptr)) {
+		if (WriteProcessMemory(hProc, pShellcode, m_data->is64bit ? x64ManualMapShellcode : x32ManualMapShellcode, m_data->is64bit ? sizeof(x64ManualMapShellcode) : sizeof(x32ManualMapShellcode), nullptr)) {
 			return pShellcode;
 		}
-
-		/*if (WriteProcessMemory(hProc, pShellcode, m_data->is64bit ? x64ManualMapShellcode : x32ManualMapShellcode, m_data->is64bit ? sizeof(x64ManualMapShellcode) : sizeof(x32ManualMapShellcode), nullptr)) {
-			return pShellcode;
-		}*/
 	}
 	return 0;
 }
@@ -335,26 +356,77 @@ bool nightshade::Injection::REQueueAPC(LPVOID lpEntryPoint, LPVOID lpMemoryAddre
 	return false;
 }
 
+struct NtCreateThreadExBuffer
+{
+	SIZE_T Size;
+	SIZE_T Unknown1;
+	SIZE_T Unknown2;
+	PULONG Unknown3;
+	void* Unknown4;
+	SIZE_T Unknown5;
+	SIZE_T Unknown6;
+	PULONG Unknown7;
+	void* Unknown8;
+};
+
 bool nightshade::Injection::RENtCreateThread(LPVOID lpEntryPoint, LPVOID lpMemoryAddress, HANDLE hProc)
 {
-	if (!nightshade::Utils::AdjustPriviledges())
+	if (!nightshade::Utils::AdjustPriviledges(hProc))
 	{
 		LOG(3, L"Failed to elevate priviledges");
 		return false;
 	}
 
 	HANDLE hThread;
-	NTSTATUS status = NtCreateThreadEx(&hThread, THREAD_ALL_ACCESS, nullptr, hProc, (LPTHREAD_START_ROUTINE)lpEntryPoint, lpMemoryAddress, FALSE, NULL, NULL, NULL, nullptr);
+
+	NtCreateThreadExBuffer ntbuffer;
+
+	memset(&ntbuffer, 0, sizeof(ntbuffer));
+	ULONG temp0[2];
+	ULONG temp1;
+
+	ntbuffer.Size = sizeof(NtCreateThreadExBuffer);
+	ntbuffer.Unknown1 = 0x10003;
+	ntbuffer.Unknown2 = sizeof(temp0);
+	ntbuffer.Unknown3 = temp0;
+	ntbuffer.Unknown4 = nullptr;
+	ntbuffer.Unknown5 = 0x10004;
+	ntbuffer.Unknown6 = sizeof(temp1);
+	ntbuffer.Unknown7 = &temp1;
+	ntbuffer.Unknown8 = nullptr;
+
+	NTSTATUS status = NtCreateThreadEx(&hThread, THREAD_ALL_ACCESS, nullptr, hProc, (m_data->flags & CLOAK_THREAD) ? 0 : lpEntryPoint, lpMemoryAddress, (m_data->flags & CLOAK_THREAD) ? 0x1 : NULL /* Suspended */, 0, 0, 0, nullptr);
 	if (NT_SUCCESS(status))
 	{
+		if (m_data->flags & CLOAK_THREAD)
+		{
+			if (HideThreadFromDebugger(hThread, hProc))
+			{
+				LOG(1, L"Sucessfully hidden thread from debugger.");
+			}
+			else {
+				LOG(2, L"Unable to hide thread from debugger. Skipping...");
+			}
+
+			if (HideThreadStartAddress(hThread, lpEntryPoint, hProc))
+			{
+				LOG(1, L"Sucessfully hidden start address for thread.");
+			}
+			else {
+				LOG(3, L"Unable to hide start address for thread.");
+				return false;
+			}
+			ResumeThread(hThread);
+		}
 		DWORD waitResult = WaitForSingleObject(hThread, INFINITE);
 		if (waitResult == WAIT_OBJECT_0) //TODO dont infinite wait
 		{
-			DWORD returnValue;
+			DWORD returnValue = 0;
 			if (GetExitCodeThread(hThread, &returnValue))
 			{
 				LOG(1, L"Remote thread returned 0x%08X", returnValue);
 			}
+			CloseHandle(hThread);
 			return true;
 		}
 		else {
@@ -362,7 +434,7 @@ bool nightshade::Injection::RENtCreateThread(LPVOID lpEntryPoint, LPVOID lpMemor
 		}
 	}
 	else {
-		LOG(3, L"Unable to create thread with NtCreateThreadEx. NTSTATUS: 0x%08X \nError: %s", status, nightshade::Utils::GetLastErrorAsString(GetLastError()).c_str());
+		LOG(3, L"Unable to create thread with NtCreateThreadEx. NTSTATUS: 0x%08X", status);
 	}
 	return false;
 }
@@ -371,3 +443,57 @@ bool nightshade::Injection::REHijackThread(LPVOID lpEntryPoint, LPVOID lpMemoryA
 {
 	return false;
 }
+
+bool nightshade::Injection::HideThreadFromDebugger(HANDLE hThread, HANDLE hProc)
+{
+	NTSTATUS status = NtSetInformationThread(hThread, ThreadHideFromDebugger, 0, 0);
+	return NT_SUCCESS(status);
+}
+
+bool nightshade::Injection::HideThreadStartAddress(HANDLE hThread, LPVOID lpEntryPoint, HANDLE hProc)
+{
+	fNtQueryInformationThread fQIT = nightshade::Utils::GetNTFunc<fNtQueryInformationThread>("NtQueryInformationThread");
+	fNtSetInformationThread fSIT = nightshade::Utils::GetNTFunc<fNtSetInformationThread>("NtSetInformationThread");
+	fNtGetContextThread fGCT = nightshade::Utils::GetNTFunc<fNtGetContextThread>("NtGetContextThread");
+	fNtSetContextThread fSCT = nightshade::Utils::GetNTFunc<fNtSetContextThread>("NtSetContextThread");
+
+	if (!m_data->is64bit)
+	{
+		WOW64_CONTEXT ctx = {};
+		ctx.ContextFlags = CONTEXT_ALL;
+		NTSTATUS status = NtQueryInformationThread(hThread, ThreadWow64Context, &ctx, sizeof(ctx), nullptr);
+
+		if (NT_FAIL(status))
+		{
+			LOG(2, L"Unable to get WOW64_CONTEXT with NtQueryInformationThread");
+			return false;
+		}
+
+		ctx.Eax = RCast<DWORD>(lpEntryPoint);
+
+		status = NtSetInformationThread(hThread, ThreadWow64Context, &ctx, sizeof(ctx));
+
+		return NT_SUCCESS(status);
+	}
+#ifdef _WIN64
+	else {
+		CONTEXT ctx = {};
+		ctx.ContextFlags = CONTEXT_ALL;
+		NTSTATUS status = NtGetContextThread(hThread, &ctx);
+
+		if (NT_FAIL(status))
+		{
+			LOG(2, L"Unable to get CONTEXT with NtQueryInformationThread");
+			return false;
+		}
+
+		ctx.Rax = RCast<DWORD64>(lpEntryPoint);
+
+		status = NtSetContextThread(hThread, &ctx);
+
+		return NT_SUCCESS(status);
+	}
+#endif
+	return false;
+}
+

@@ -19,8 +19,77 @@
 #define RCast reinterpret_cast
 #define SCast static_cast
 
+#define RPM(h, addr, buffer, size, readBytes) if(!ReadProcessMemory(h, addr, buffer, size, readBytes)) { \
+LOG(3, L"Unable to RPM at 0x%08X for size %d bytes. Error %s", addr, size, nightshade::Utils::GetLastErrorAsString(GetLastError()).c_str()); \
+} \
+
+#define WPM(h, addr, buffer, size, writtenBytes) if(!WriteProcessMemory(h, addr, buffer, size, writtenBytes)) { \
+LOG(3, L"Unable to WPM at 0x%08X for size %d bytes. Error %s", addr, size, nightshade::Utils::GetLastErrorAsString(GetLastError()).c_str()); \
+} \
+
 namespace nightshade {
 	namespace Utils {
+
+		inline std::wstring GetLastErrorAsString(DWORD error)
+		{
+			if (error == 0)
+				return std::wstring(L"No Error");
+
+			std::string errorMessage = std::system_category().message(error);
+			std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+			return converter.from_bytes(errorMessage);
+		}
+
+		inline std::string WStringToCString(const std::wstring& string)
+		{
+			using convert_typeX = std::codecvt_utf8<wchar_t>;
+			std::wstring_convert<convert_typeX, wchar_t> converter;
+			return converter.to_bytes(string);
+		}
+
+		inline std::wstring CStringToWString(const std::string& string)
+		{
+			using convert_typeX = std::codecvt_utf8<wchar_t>;
+			std::wstring_convert<convert_typeX, wchar_t> converter;
+			return converter.from_bytes(string);
+		}
+
+		inline MODULEENTRY32W GetModuleEx(HANDLE hProc, std::wstring dllName)
+		{
+			MODULEENTRY32W modEntry = {};
+			HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, GetProcessId(hProc));
+			if (hSnapshot == INVALID_HANDLE_VALUE)
+			{
+				LOG(3, L"Unable to create snapshot of modules for PID %d, Error: %s", GetProcessId(hProc), nightshade::Utils::GetLastErrorAsString(GetLastError()).c_str());
+				return modEntry;
+			}
+			modEntry.dwSize = sizeof(MODULEENTRY32W);
+			std::transform(dllName.begin(), dllName.end(), dllName.begin(), ::tolower);
+			dllName.append(L".dll");
+
+			DWORD moduleBase = 0;
+			DWORD moduleSize = 0;
+			if (!Module32FirstW(hSnapshot, &modEntry))
+			{
+				CloseHandle(hSnapshot);
+				LOG(3, L"Unable to Module32FirstW");
+				return modEntry;
+			}
+			do {
+
+				std::wstring wModule(modEntry.szModule);
+				std::transform(wModule.begin(), wModule.end(), wModule.begin(), ::tolower);
+				if (wcscmp(wModule.c_str(), dllName.c_str()) == 0)
+				{
+					moduleBase = RCast<DWORD>(modEntry.modBaseAddr);
+					moduleSize = modEntry.modBaseSize;
+					CloseHandle(hSnapshot);
+					break;
+				}
+			} while (Module32NextW(hSnapshot, &modEntry));
+			return modEntry;
+		}
+
 		inline Architecture GetDLLArchitecture(const wchar_t* path)
 		{
 			LOADED_IMAGE loadedImage;
@@ -53,38 +122,37 @@ namespace nightshade {
 
 		const wchar_t* ArchToString(Architecture arch);
 
-		inline bool IsDllCompatible(Architecture dllArch, HANDLE hProc)
+		inline Architecture GetProcessArchitecture(HANDLE hProc)
 		{
 			BOOL IsProcWoW64;
 			IsWow64Process(hProc, &IsProcWoW64);
-			LOG(1, L"DLL architecture is %s", ArchToString(dllArch));
 			if (IsProcWoW64)
 			{
-				LOG(1, L"Process is X86");
-				return dllArch == Architecture::x86;
+				return Architecture::x86;
 			}
 			else {
-				SYSTEM_INFO sysInfo;
-				ZeroMemory(&sysInfo, sizeof(sysInfo));
+				SYSTEM_INFO sysInfo = {};
 				GetSystemInfo(&sysInfo);
 
 				if (sysInfo.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_AMD64)
 				{
-					LOG(1, L"Process is X64");
-					return dllArch == Architecture::X64;
+					return Architecture::X64;
 				}
 				else if (sysInfo.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_INTEL)
 				{
-					LOG(1, L"Process is X86");
-					return dllArch == Architecture::x86;
+					return Architecture::x86;
 				}
 			}
-			return false;
+		}
+
+		inline bool IsDllCompatible(Architecture dllArch, HANDLE hProc)
+		{
+			return GetProcessArchitecture(hProc) == dllArch;
 		}
 
 		inline bool IsDllCompatible(const wchar_t* dllPath, HANDLE hProc)
 		{
-			return IsDllCompatible(GetDLLArchitecture(dllPath), hProc);
+			return GetDLLArchitecture(dllPath) == GetProcessArchitecture(hProc);
 		}
 
 		inline bool GetThreadsFromProcess(DWORD dwPID, std::vector<DWORD>& tIDs)
@@ -161,18 +229,19 @@ namespace nightshade {
 			return isElevated;
 		}
 
-		inline bool AdjustPriviledges()
+		inline bool AdjustPriviledges(HANDLE hProc)
 		{
-			HANDLE hToken;
-			TOKEN_PRIVILEGES tokenPriv;
+			HANDLE hToken = 0;
+			TOKEN_PRIVILEGES tokenPriv = {};
 			if (OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken))
 			{
 				LookupPrivilegeValue(NULL, SE_DEBUG_NAME, &tokenPriv.Privileges[0].Luid);
 				tokenPriv.PrivilegeCount = 1;
 				tokenPriv.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-				return AdjustTokenPrivileges(hToken, false, &tokenPriv, sizeof(tokenPriv), NULL, NULL);
+				AdjustTokenPrivileges(hToken, false, &tokenPriv, sizeof(tokenPriv), NULL, NULL);
+				CloseHandle(hToken);
 			}
-			return false;
+			return true;
 		}
 
 		inline const wchar_t* ArchToString(Architecture arch)
@@ -188,103 +257,206 @@ namespace nightshade {
 			}
 		}
 
-		inline std::wstring GetLastErrorAsString(DWORD error)
+		inline bool detectJmps32(uintptr_t addr)
 		{
-			if (error == 0)
-				return std::wstring(L"No Error");
-
-			std::string errorMessage = std::system_category().message(error);
-			std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
-			return converter.from_bytes(errorMessage);
-		}
-
-		inline std::string WStringToCString(const std::wstring& string)
-		{
-			using convert_typeX = std::codecvt_utf8<wchar_t>;
-			std::wstring_convert<convert_typeX, wchar_t> converter;
-			return converter.to_bytes(string);
-		}
-
-		inline std::wstring CStringToWString(const std::string& string)
-		{
-			using convert_typeX = std::codecvt_utf8<wchar_t>;
-			std::wstring_convert<convert_typeX, wchar_t> converter;
-			return converter.from_bytes(string);
-		}
-
-		inline uintptr_t GetRVAExportAddress(std::string dllName, std::string functionName)
-		{
-
-			HMODULE library = LoadLibraryA(dllName.c_str());
-			if (library == NULL)
+			if (*((BYTE*)addr) == 0xE9)
 			{
-				LOG(3, L"Unable to load dll, %s", nightshade::Utils::CStringToWString(dllName));
-				return 0;
+				return true;
 			}
 
-			uintptr_t base = RCast<uintptr_t>(library);
-			IMAGE_DOS_HEADER* dosHeader = RCast<IMAGE_DOS_HEADER*>(base);
-			IMAGE_NT_HEADERS* ntHeader = RCast<IMAGE_NT_HEADERS*>(base + dosHeader->e_lfanew);
-			IMAGE_EXPORT_DIRECTORY* expDirectory = RCast<IMAGE_EXPORT_DIRECTORY*>(base + ntHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress);
-
-			DWORD* functionAddresses = RCast<DWORD*>(base + expDirectory->AddressOfFunctions);
-			DWORD* funcNames = RCast<DWORD*>(base + expDirectory->AddressOfNames);
-			WORD* funcOrd = RCast<WORD*>(base + expDirectory->AddressOfNameOrdinals);
-
-			for (DWORD i = 0; i < expDirectory->NumberOfNames; i++)
-			{
-				char* funcName = RCast<char*>(base + funcNames[i]);
-				if (strcmp(functionName.c_str(), funcName) == 0)
-				{					
-					WORD ordinal = funcOrd[i];
-					uintptr_t addr = functionAddresses[ordinal];
-					LOG(1, L"Found function at RVA 0x%08X.", addr);
-					LOG(1, L"Function at 0x%08X.", base + addr);
-					if (base + addr > ntHeader->OptionalHeader.DataDirectory[0].VirtualAddress && base + addr < ntHeader->OptionalHeader.DataDirectory[0].VirtualAddress + ntHeader->OptionalHeader.DataDirectory[0].Size)
-					{
-						LOG(1, L"Address is forwarded.");
-					}
-					return addr;
-				}
-			}
-
-			return 0;
+			return false;
 		}
 
-		inline uintptr_t GetExportAddress(std::wstring dllName, std::string funcName, HANDLE hProc)
+		inline uintptr_t followJmps32(uintptr_t addr)
 		{
-			std::string sDllName = WStringToCString(dllName);
-			uintptr_t rva = GetRVAExportAddress(sDllName, funcName);
-			HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, GetProcessId(hProc));
-			if (hSnapshot == INVALID_HANDLE_VALUE)
+			while (*((BYTE*)addr) == 0xE9)
 			{
-				LOG(3, L"Unable to create snapshot of modules for PID %d, Error: %s", GetProcessId(hProc), nightshade::Utils::GetLastErrorAsString(GetLastError()).c_str());
-				return 0;
+				intptr_t jmpTo = *(intptr_t*)(addr + 1);
+				addr = (addr + 5) + jmpTo;
 			}
-			MODULEENTRY32W modEntry = {};
-			modEntry.dwSize = sizeof(MODULEENTRY32W);
-			std::transform(dllName.begin(), dllName.end(), dllName.begin(), ::tolower);
-			dllName.append(L".dll");
-			if (!Module32FirstW(hSnapshot, &modEntry))
+
+			return addr;
+		}
+
+		inline bool detectJmps32Ex(HANDLE hProc, uintptr_t addr)
+		{
+			BYTE byte = 0;
+			RPM(hProc, RCast<void*>(addr), &byte, sizeof(byte), nullptr);
+			if (byte == 0xE9)
 			{
-				CloseHandle(hSnapshot);
-				return false;
+				return true;
 			}
-			do {
-				
-				std::wstring wModule(modEntry.szModule);
-				std::transform(wModule.begin(), wModule.end(), wModule.begin(), ::tolower);
-				if (wcscmp(wModule.c_str(), dllName.c_str()) == 0)
+
+			return false;
+		}
+
+		inline uintptr_t followJmps32Ex(HANDLE hProc, uintptr_t addr)
+		{
+			if (GetProcessArchitecture(hProc) == Architecture::X64)
+			{
+				while (detectJmps32Ex(hProc, addr))
 				{
-					uintptr_t addr = RCast<uintptr_t>(modEntry.modBaseAddr) + rva;
-					LOG(1, L"Found Export Address for %s!%s -> 0x%16X", dllName.c_str(), CStringToWString(funcName).c_str(), RCast<uintptr_t>(modEntry.modBaseAddr + rva));
-					CloseHandle(hSnapshot);
-					return addr;
+					long long jmpTo = 0;
+					RPM(hProc, RCast<void*>(addr + 1), &jmpTo, sizeof(jmpTo), nullptr);
+					addr = (addr + 5) + jmpTo;
 				}
-			} while (Module32NextW(hSnapshot, &modEntry));
-			std::wstring wFuncName = CStringToWString(funcName);
-			LOG(3, L"Unable to find Export Address for %s!%s", dllName.c_str(), wFuncName);
-			CloseHandle(hSnapshot);
+			}
+			else {
+				while (detectJmps32Ex(hProc, addr))
+				{
+					int jmpTo = 0;
+					RPM(hProc, RCast<void*>(addr + 1), &jmpTo, sizeof(jmpTo), nullptr);
+					addr = (addr + 5) + jmpTo;
+				}
+			}
+			return addr;
+		}
+
+		inline uintptr_t GetProcAddressEx(HANDLE hProc, std::wstring dllName, std::string functionName);
+
+		inline uintptr_t GetProcAddressExH(HANDLE hProc, std::wstring dllName, std::string functionName, bool checkForHooks, bool restoreOriginal)
+		{
+			if (!checkForHooks)
+				return GetProcAddressEx(hProc, dllName, functionName);
+
+			uintptr_t funcAddr = GetProcAddressEx(hProc, dllName, functionName);
+
+			if (!funcAddr)
+				return 0;
+
+			BYTE byte[5] = {};
+
+			RPM(hProc, RCast<void*>(funcAddr), &byte, sizeof(byte), nullptr);
+
+			if (byte[0] == 0xE9)
+			{
+				uintptr_t followJmps = followJmps32Ex(hProc, funcAddr);
+
+				if (!followJmps)
+				{
+					LOG(3, L"Unable to follow hook.");
+					return 0;
+				}
+
+				MODULEENTRY32W modEntry = GetModuleEx(hProc, dllName);
+				
+				if (RCast<uintptr_t>(modEntry.modBaseAddr) > followJmps || RCast<uintptr_t>(modEntry.modBaseAddr + modEntry.modBaseSize) < followJmps)
+				{
+					LOG(3, L"Function is hooked and jmps outside module address space. -> 0x%08X", followJmps);
+
+					if (!restoreOriginal)
+						return funcAddr;
+
+					HMODULE hModule = GetModuleHandleW(dllName.c_str());
+
+					if (!hModule)
+					{
+						LOG(3, L"Unable to get handle on %s", dllName.c_str());
+						return 0;
+					}
+
+					uintptr_t ourFuncAddr = RCast<uintptr_t>(GetProcAddress(hModule, functionName.c_str()));
+
+					
+					return funcAddr;
+				}
+			}
+
+			return funcAddr;
+		}
+
+		inline uintptr_t GetProcAddressEx(HANDLE hProc, std::wstring dllName, std::string functionName)
+		{
+			MODULEENTRY32W modEntry = GetModuleEx(hProc, dllName);
+			Architecture procArch = GetProcessArchitecture(hProc);
+
+			uintptr_t moduleBase = RCast<uintptr_t>(modEntry.modBaseAddr);
+			DWORD moduleSize = modEntry.dwSize;
+
+			if (!moduleBase || !moduleSize)
+			{
+				LOG(3, L"Unable to find module %s in remote process %d", dllName.c_str(), GetProcessId(hProc));
+				return 0;
+			}
+
+			IMAGE_DOS_HEADER dosHeader = {};
+			RPM(hProc, RCast<void*>(moduleBase), &dosHeader, sizeof(IMAGE_DOS_HEADER), nullptr);
+
+			if (dosHeader.e_magic != IMAGE_DOS_SIGNATURE)
+			{
+				LOG(3, L"DOS Signature of remote module %s is not correct.", dllName.c_str());
+				return 0;
+			}
+
+			uintptr_t exportDirectoryVA = 0;
+
+			if (procArch == Architecture::x86)
+			{
+				IMAGE_NT_HEADERS32 ntHeader = {};
+				RPM(hProc, RCast<void*>(moduleBase + dosHeader.e_lfanew), &ntHeader, sizeof(IMAGE_NT_HEADERS32), nullptr);
+
+				if (ntHeader.Signature != IMAGE_NT_SIGNATURE)
+				{
+					LOG(3, L"NT Signature of remote module %s is not correct.", dllName.c_str());
+					return 0;
+				}
+
+				if (!ntHeader.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress)
+				{
+					LOG(3, L"Unable to read Export directory virtual address");
+					return 0;
+				}
+
+				exportDirectoryVA = ntHeader.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
+			}
+			else {
+				IMAGE_NT_HEADERS64 ntHeader = {};
+				RPM(hProc, RCast<void*>(moduleBase + dosHeader.e_lfanew), &ntHeader, sizeof(IMAGE_NT_HEADERS64), nullptr);
+
+				if (ntHeader.Signature != IMAGE_NT_SIGNATURE)
+				{
+					LOG(3, L"NT Signature of remote module %s is not correct.", dllName.c_str());
+					return 0;
+				}
+
+				if (!ntHeader.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress)
+				{
+					LOG(3, L"Unable to read Export directory virtual address");
+					return 0;
+				}
+
+				exportDirectoryVA = ntHeader.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
+			}
+
+			IMAGE_EXPORT_DIRECTORY expDirectory = {};
+			RPM(hProc, RCast<void*>(moduleBase + exportDirectoryVA), &expDirectory, sizeof(IMAGE_EXPORT_DIRECTORY), nullptr);
+
+			uintptr_t addrOfFunc = moduleBase + expDirectory.AddressOfFunctions;
+			uintptr_t addrOfNames = moduleBase + expDirectory.AddressOfNames;
+			uintptr_t addrOfOrdinals = moduleBase + expDirectory.AddressOfNameOrdinals;
+
+			WORD ordinal = 0;
+			size_t len_buf = functionName.length() + 1;
+			char* nameBuff = new char[len_buf];
+
+			size_t addrLength = (procArch == Architecture::x86 ? sizeof(DWORD) : sizeof(uintptr_t));
+
+			for (DWORD i = 0; i < expDirectory.NumberOfNames; i++)
+			{
+				uintptr_t rvaString = 0;
+				RPM(hProc, RCast<void*>(addrOfNames + (i * addrLength)), &rvaString, addrLength, nullptr);
+				RPM(hProc, RCast<void*>(moduleBase + rvaString), nameBuff, len_buf, nullptr);
+
+				if (!lstrcmpiA(functionName.c_str(), nameBuff))
+				{
+					RPM(hProc, RCast<void*>(addrOfOrdinals + (i * sizeof(WORD))), &ordinal, sizeof(WORD), nullptr);
+					uintptr_t funcRVA = 0;
+					RPM(hProc, RCast<void*>(addrOfFunc + (ordinal * addrLength)), &funcRVA, addrLength, nullptr);
+					delete[] nameBuff;
+					return moduleBase + funcRVA;
+				}
+			}
+			delete[] nameBuff;
 			return 0;
 		}
 	}
